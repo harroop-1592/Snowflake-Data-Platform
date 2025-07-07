@@ -18,13 +18,13 @@ MODELS = [
 @st.cache_resource
 def create_session():
     connection_parameters = {
-        "account": st.secrets["snowflake"]["account"],
-        "user": st.secrets["snowflake"]["user"],
-        "password": st.secrets["snowflake"]["password"],
-        "role": st.secrets["snowflake"]["role"],
-        "warehouse": st.secrets["snowflake"]["warehouse"],
-        "database": st.secrets["snowflake"]["database"],
-        "schema": st.secrets["snowflake"]["schema"],
+        "account": os.getenv("account"),
+        "user": os.getenv("user"),
+        "password": os.getenv("password"),
+        "role": os.getenv("role"),
+        "warehouse": os.getenv("warehouse"),
+        "database": os.getenv("database"),
+        "schema": os.getenv("schema")
     }
     return Session.builder.configs(connection_parameters).create()
 
