@@ -13,6 +13,16 @@ MODELS = [
     "llama3-8b",
 ]
 
+# ------------------------ STRUCTURED KEYWORDS ------------------------ #
+STRUCTURED_KEYWORDS = [
+    "nasdaq traded", "symbol", "security name", "listing exchange",
+    "market category", "etf", "round lot size", "test issue",
+    "financial status", "cqs symbol", "nasdaq symbol", "nextshares"
+]
+
+STRUCTURED_SERVICE = "stock_market_service"
+UNSTRUCTURED_SERVICE = "prospectus_service"
+
 # ------------------------ SESSION CREATION ------------------------ #
 @st.cache_resource
 def create_session():
@@ -27,9 +37,7 @@ def create_session():
     }
     return Session.builder.configs(connection_parameters).create()
 
-
 session = create_session()
-#root = Root.from_session(session)
 root = Root(session)
 
 # ------------------------ INIT METHODS ------------------------ #
@@ -52,43 +60,38 @@ def init_service_metadata():
                 )
         st.session_state.service_metadata = service_metadata
 
+# ------------------------ CLASSIFIER ------------------------ #
+def classify_prompt(prompt: str) -> str:
+    prompt_lower = prompt.lower()
+    for keyword in STRUCTURED_KEYWORDS:
+        if keyword in prompt_lower:
+            return "structured"
+    return "unstructured"
+
+# ------------------------ CONFIG OPTIONS ------------------------ #
 def init_config_options():
-    st.sidebar.selectbox(
-        "Select cortex search service:",
-        [s["name"] for s in st.session_state.service_metadata],
-        key="selected_cortex_search_service",
-    )
     st.sidebar.button("Clear conversation", key="clear_conversation")
     st.sidebar.toggle("Debug", key="debug", value=False)
     st.sidebar.toggle("Use chat history", key="use_chat_history", value=True)
 
     with st.sidebar.expander("Advanced options"):
         st.selectbox("Select model:", MODELS, key="model_name")
-        st.number_input(
-            "Select number of context chunks",
-            value=5,
-            key="num_retrieved_chunks",
-            min_value=1,
-            max_value=10,
-        )
-        st.number_input(
-            "Select number of messages to use in chat history",
-            value=5,
-            key="num_chat_messages",
-            min_value=1,
-            max_value=10,
-        )
+        st.number_input("Select number of context chunks", value=5, key="num_retrieved_chunks", min_value=1, max_value=10)
+        st.number_input("Select number of messages to use in chat history", value=5, key="num_chat_messages", min_value=1, max_value=10)
 
-    st.sidebar.expander("Session State").write(st.session_state)
+    if st.session_state.debug:
+        st.sidebar.expander("Session State").write(st.session_state)
 
 # ------------------------ MAIN UTILITY METHODS ------------------------ #
 def query_cortex_search_service(query):
     db, schema = session.get_current_database(), session.get_current_schema()
-    cortex_search_service = (
-        root.databases[db]
-            .schemas[schema]
-            .cortex_search_services[st.session_state.selected_cortex_search_service]
-    )
+
+    # Classify prompt
+    service_type = classify_prompt(query)
+    service_name = STRUCTURED_SERVICE if service_type == "structured" else UNSTRUCTURED_SERVICE
+    st.session_state.selected_cortex_search_service = service_name
+
+    cortex_search_service = root.databases[db].schemas[schema].cortex_search_services[service_name]
 
     context_documents = cortex_search_service.search(
         query, columns=[], limit=st.session_state.num_retrieved_chunks
@@ -96,15 +99,20 @@ def query_cortex_search_service(query):
     results = context_documents.results
 
     service_metadata = st.session_state.service_metadata
-    search_col = [
+    search_col_list = [
         s["search_column"]
         for s in service_metadata
-        if s["name"] == st.session_state.selected_cortex_search_service
-    ][0]
+        if s["name"].lower() == service_name.lower()
+    ]
+
+    if not search_col_list:
+        raise ValueError(f"Search service '{service_name}' not found in service metadata.")
+
+    search_col = search_col_list[0]
 
     context_str = ""
     for i, r in enumerate(results):
-        context_str += f"Context document {i+1}: {r[search_col]} \n\n"
+        context_str += f"Context document {i+1}: {r[search_col]}\n\n"
 
     if st.session_state.debug:
         st.sidebar.text_area("Context documents", context_str, height=500)
@@ -112,9 +120,7 @@ def query_cortex_search_service(query):
     return context_str
 
 def get_chat_history():
-    start_index = max(
-        0, len(st.session_state.messages) - st.session_state.num_chat_messages
-    )
+    start_index = max(0, len(st.session_state.messages) - st.session_state.num_chat_messages)
     return st.session_state.messages[start_index : len(st.session_state.messages) - 1]
 
 def complete(model, prompt):
@@ -135,13 +141,10 @@ def make_chat_history_summary(chat_history, question):
         </question>
         [/INST]
     """
-
     summary = complete(st.session_state.model_name, prompt)
 
     if st.session_state.debug:
-        st.sidebar.text_area(
-            "Chat history summary", summary.replace("$", "\$"), height=150
-        )
+        st.sidebar.text_area("Chat history summary", summary.replace("$", "\$"), height=150)
 
     return summary
 
@@ -221,6 +224,5 @@ def main():
             {"role": "assistant", "content": generated_response}
         )
 
-# Run the app
 if __name__ == "__main__":
     main()
